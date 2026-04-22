@@ -1,11 +1,11 @@
-"""ChatGPT Images tool implementation — wraps OpenAI Image and Vision APIs.
+"""OpenAI Images tool implementation — wraps the OpenAI Images API.
 
-Uses gpt-image-2 for generation and GPT-5.4 for vision (analyze/compare).
+Uses ``gpt-image-2`` for generation/editing and ``gpt-image-1.5`` for background
+removal (transparent alpha channel).
 """
 
 import base64
 import logging
-import mimetypes
 import os
 from pathlib import Path
 from typing import Any
@@ -15,11 +15,15 @@ from amplifier_core import ToolResult
 logger = logging.getLogger(__name__)
 
 
-class ChatGPTImagesTool:
-    """OpenAI ChatGPT Images tool for image analysis, comparison, and generation."""
+class OpenAIImagesTool:
+    """OpenAI Images tool for generation, editing, and background removal."""
 
     DEFAULT_GEN_MODEL = "gpt-image-2"
-    DEFAULT_VISION_MODEL = "gpt-5.4"
+    DEFAULT_BG_REMOVAL_MODEL = "gpt-image-1.5"
+    DEFAULT_BG_REMOVAL_PROMPT = (
+        "Remove the background from this image, preserving the foreground "
+        "subject with high fidelity"
+    )
 
     def __init__(self, config: dict[str, Any], coordinator: Any) -> None:
         self.config = config
@@ -27,7 +31,7 @@ class ChatGPTImagesTool:
         self.api_key = config.get("api_key") or os.getenv("OPENAI_API_KEY")
         self.working_dir = config.get("working_dir")
         self.gen_model = config.get("gen_model", self.DEFAULT_GEN_MODEL)
-        self.vision_model = config.get("vision_model", self.DEFAULT_VISION_MODEL)
+        self.bg_removal_model = config.get("bg_removal_model", self.DEFAULT_BG_REMOVAL_MODEL)
 
     @property
     def name(self) -> str:
@@ -36,10 +40,12 @@ class ChatGPTImagesTool:
     @property
     def description(self) -> str:
         return (
-            "OpenAI ChatGPT Images tool for visual analysis, comparison, and image generation. "
-            "Operations: analyze (single image via GPT vision), compare (two images), "
-            "generate (create images via gpt-image-2). Supports flexible resolutions up to 4K, "
-            "quality tiers (low/medium/high), and reference image editing."
+            "OpenAI Images tool for image generation, editing, and background "
+            "removal. Operations: generate (create/edit images via gpt-image-2) "
+            "and remove_background (alpha-channel background removal via "
+            "gpt-image-1.5). Supports flexible resolutions up to 4K, quality "
+            "tiers (low/medium/high), output formats (png/jpeg/webp), and "
+            "multi-image reference editing."
         )
 
     @property
@@ -49,41 +55,29 @@ class ChatGPTImagesTool:
             "properties": {
                 "operation": {
                     "type": "string",
-                    "enum": ["analyze", "compare", "generate"],
+                    "enum": ["generate", "remove_background"],
                     "description": (
-                        "Operation: analyze (single image), compare (two images), "
-                        "or generate (create image)"
+                        "Operation: generate (create image) or "
+                        "remove_background (alpha-channel bg removal)"
                     ),
                 },
                 "prompt": {
                     "type": "string",
-                    "description": "Analysis, comparison, or generation prompt/question",
+                    "description": (
+                        "Generation prompt (required for generate; optional "
+                        "override for remove_background)"
+                    ),
                 },
                 "image_path": {
                     "type": "string",
-                    "description": "Image path (required for analyze operation)",
-                },
-                "image1_path": {
-                    "type": "string",
-                    "description": "First image path (required for compare)",
-                },
-                "image2_path": {
-                    "type": "string",
-                    "description": "Second image path (required for compare)",
-                },
-                "image1_label": {
-                    "type": "string",
-                    "default": "IMAGE 1",
-                    "description": "Label for first image (default: 'IMAGE 1')",
-                },
-                "image2_label": {
-                    "type": "string",
-                    "default": "IMAGE 2",
-                    "description": "Label for second image (default: 'IMAGE 2')",
+                    "description": "Image path (required for remove_background)",
                 },
                 "output_path": {
                     "type": "string",
-                    "description": "Output path for generated image (required for generate)",
+                    "description": (
+                        "Output path for generated/edited image (required for "
+                        "generate and remove_background)"
+                    ),
                 },
                 "number_of_images": {
                     "type": "integer",
@@ -94,24 +88,55 @@ class ChatGPTImagesTool:
                 },
                 "reference_image_path": {
                     "type": "string",
-                    "description": ("Optional reference image for generation (uses edit endpoint)"),
+                    "description": (
+                        "Optional single reference image for generation (uses "
+                        "edit endpoint). Merged with reference_image_paths if "
+                        "both are provided."
+                    ),
+                },
+                "reference_image_paths": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Optional list of reference images for generation "
+                        "(uses edit endpoint with multiple images)."
+                    ),
                 },
                 "size": {
                     "type": "string",
                     "default": "auto",
                     "description": (
-                        "Image size: 'auto', '1024x1024', '1536x1024', '1024x1536', "
-                        "'2048x2048', '3840x2160', etc. Max edge 3840px, ratio up to 3:1."
+                        "Image size: 'auto', '1024x1024', '1536x1024', "
+                        "'1024x1536', '2048x2048', '3840x2160', etc. Max edge "
+                        "3840px, ratio up to 3:1."
                     ),
                 },
                 "quality": {
                     "type": "string",
                     "enum": ["low", "medium", "high", "auto"],
                     "default": "auto",
-                    "description": "Image quality. 'low' for fast drafts, 'high' for final assets.",
+                    "description": (
+                        "Image quality. 'low' for fast drafts, 'high' for final assets."
+                    ),
+                },
+                "format": {
+                    "type": "string",
+                    "enum": ["png", "jpeg", "webp"],
+                    "default": "png",
+                    "description": (
+                        "Output image format (maps to output_format in the OpenAI SDK)."
+                    ),
+                },
+                "output_compression": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100,
+                    "description": (
+                        "Compression level (0-100). Only applies when format is jpeg or webp."
+                    ),
                 },
             },
-            "required": ["operation", "prompt"],
+            "required": ["operation"],
         }
 
     def _resolve_path(self, path_str: str) -> Path:
@@ -121,18 +146,8 @@ class ChatGPTImagesTool:
             path = Path(self.working_dir) / path
         return path
 
-    def _get_mime_type(self, file_path: Path) -> str:
-        """Get MIME type from file extension."""
-        mime_type, _ = mimetypes.guess_type(str(file_path))
-        return mime_type or "image/png"
-
-    def _encode_image_base64(self, file_path: Path) -> str:
-        """Read and base64-encode an image file."""
-        with open(file_path, "rb") as f:
-            return base64.b64encode(f.read()).decode("utf-8")
-
     async def execute(self, input_data: dict[str, Any]) -> ToolResult:
-        """Execute a GPT Image operation."""
+        """Execute an OpenAI Images operation."""
         from openai import OpenAI  # lazy import to avoid startup cost
 
         if not self.api_key:
@@ -147,17 +162,13 @@ class ChatGPTImagesTool:
         prompt = input_data.get("prompt", "")
 
         try:
-            if operation == "analyze":
-                return await self._analyze(client, input_data, prompt)
-            elif operation == "compare":
-                return await self._compare(client, input_data, prompt)
-            elif operation == "generate":
+            if operation == "generate":
                 return await self._generate(client, input_data, prompt)
-            else:
-                error_msg = (
-                    f"Unknown operation: {operation}. Use 'analyze', 'compare', or 'generate'."
-                )
-                return ToolResult(success=False, output=error_msg, error={"message": error_msg})
+            if operation == "remove_background":
+                return await self._remove_background(client, input_data, prompt)
+
+            error_msg = f"Unknown operation: {operation}. Use 'generate' or 'remove_background'."
+            return ToolResult(success=False, output=error_msg, error={"message": error_msg})
         except FileNotFoundError as e:
             await self.coordinator.hooks.emit(
                 "tool.openai_images.error", {"operation": operation, "error": str(e)}
@@ -167,117 +178,15 @@ class ChatGPTImagesTool:
             await self.coordinator.hooks.emit(
                 "tool.openai_images.error", {"operation": operation, "error": str(e)}
             )
-            error_msg = f"ChatGPT Images request failed: {e}"
+            error_msg = f"OpenAI Images request failed: {e}"
             return ToolResult(success=False, output=error_msg, error={"message": error_msg})
-
-    async def _analyze(self, client: Any, input_data: dict, prompt: str) -> ToolResult:
-        """Analyze a single image using GPT vision."""
-        image_path_str = input_data.get("image_path")
-        if not image_path_str:
-            error_msg = "image_path is required for analyze operation"
-            return ToolResult(success=False, output=error_msg, error={"message": error_msg})
-
-        image_path = self._resolve_path(image_path_str)
-        if not image_path.exists():
-            raise FileNotFoundError(f"Image not found: {image_path}")
-
-        await self.coordinator.hooks.emit(
-            "tool.openai_images.analyze",
-            {"image_path": str(image_path), "model": self.vision_model},
-        )
-
-        mime_type = self._get_mime_type(image_path)
-        image_b64 = self._encode_image_base64(image_path)
-
-        response = client.chat.completions.create(
-            model=self.vision_model,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:{mime_type};base64,{image_b64}",
-                                "detail": "high",
-                            },
-                        },
-                    ],
-                }
-            ],
-            max_tokens=4096,
-        )
-
-        return ToolResult(
-            success=True,
-            output={"analysis": response.choices[0].message.content},
-        )
-
-    async def _compare(self, client: Any, input_data: dict, prompt: str) -> ToolResult:
-        """Compare two images using GPT vision."""
-        image1_path_str = input_data.get("image1_path")
-        image2_path_str = input_data.get("image2_path")
-        if not image1_path_str or not image2_path_str:
-            error_msg = "image1_path and image2_path are required for compare operation"
-            return ToolResult(success=False, output=error_msg, error={"message": error_msg})
-
-        image1_path = self._resolve_path(image1_path_str)
-        image2_path = self._resolve_path(image2_path_str)
-        if not image1_path.exists():
-            raise FileNotFoundError(f"Image not found: {image1_path}")
-        if not image2_path.exists():
-            raise FileNotFoundError(f"Image not found: {image2_path}")
-
-        label1 = input_data.get("image1_label", "IMAGE 1")
-        label2 = input_data.get("image2_label", "IMAGE 2")
-
-        await self.coordinator.hooks.emit(
-            "tool.openai_images.compare",
-            {"image1_path": str(image1_path), "image2_path": str(image2_path)},
-        )
-
-        mime1 = self._get_mime_type(image1_path)
-        mime2 = self._get_mime_type(image2_path)
-        img1_b64 = self._encode_image_base64(image1_path)
-        img2_b64 = self._encode_image_base64(image2_path)
-
-        response = client.chat.completions.create(
-            model=self.vision_model,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:{mime1};base64,{img1_b64}",
-                                "detail": "high",
-                            },
-                        },
-                        {"type": "text", "text": f"^ {label1}"},
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:{mime2};base64,{img2_b64}",
-                                "detail": "high",
-                            },
-                        },
-                        {"type": "text", "text": f"^ {label2}"},
-                    ],
-                }
-            ],
-            max_tokens=4096,
-        )
-
-        return ToolResult(
-            success=True,
-            output={"comparison": response.choices[0].message.content},
-        )
 
     async def _generate(self, client: Any, input_data: dict, prompt: str) -> ToolResult:
-        """Generate images using gpt-image-2."""
+        """Generate (or edit) images using gpt-image-2."""
+        if not prompt:
+            error_msg = "prompt is required for generate operation"
+            return ToolResult(success=False, output=error_msg, error={"message": error_msg})
+
         output_path_str = input_data.get("output_path")
         if not output_path_str:
             error_msg = "output_path is required for generate operation"
@@ -291,7 +200,16 @@ class ChatGPTImagesTool:
 
         size = input_data.get("size", "auto")
         quality = input_data.get("quality", "auto")
-        reference_path_str = input_data.get("reference_image_path")
+        output_format = input_data.get("format", "png")
+        output_compression = input_data.get("output_compression")
+
+        # Merge singular + plural reference image params (backward compat)
+        ref_path_strs: list[str] = []
+        single_ref = input_data.get("reference_image_path")
+        if single_ref:
+            ref_path_strs.append(single_ref)
+        multi_refs = input_data.get("reference_image_paths") or []
+        ref_path_strs.extend(multi_refs)
 
         await self.coordinator.hooks.emit(
             "tool.openai_images.generate",
@@ -300,39 +218,42 @@ class ChatGPTImagesTool:
                 "model": self.gen_model,
                 "size": size,
                 "quality": quality,
+                "format": output_format,
                 "number_of_images": number_of_images,
-                "has_reference": reference_path_str is not None,
+                "reference_count": len(ref_path_strs),
             },
         )
 
-        if reference_path_str:
-            # Use the edit endpoint with reference image
-            ref_path = self._resolve_path(reference_path_str)
-            if not ref_path.exists():
-                raise FileNotFoundError(f"Reference image not found: {ref_path}")
+        common_kwargs: dict[str, Any] = {
+            "model": self.gen_model,
+            "prompt": prompt,
+            "n": number_of_images,
+            "quality": quality,
+            "output_format": output_format,
+        }
+        if size != "auto":
+            common_kwargs["size"] = size
+        if output_compression is not None and output_format in ("jpeg", "webp"):
+            common_kwargs["output_compression"] = output_compression
 
-            with open(ref_path, "rb") as ref_file:
-                edit_kwargs: dict[str, Any] = {
-                    "model": self.gen_model,
-                    "image": ref_file,
-                    "prompt": prompt,
-                    "n": number_of_images,
-                    "quality": quality,
-                }
-                if size != "auto":
-                    edit_kwargs["size"] = size
+        if ref_path_strs:
+            resolved_refs: list[Path] = []
+            for p in ref_path_strs:
+                rp = self._resolve_path(p)
+                if not rp.exists():
+                    raise FileNotFoundError(f"Reference image not found: {rp}")
+                resolved_refs.append(rp)
+
+            open_files = [open(rp, "rb") for rp in resolved_refs]
+            try:
+                edit_kwargs = dict(common_kwargs)
+                edit_kwargs["image"] = open_files if len(open_files) > 1 else open_files[0]
                 result = client.images.edit(**edit_kwargs)
+            finally:
+                for f in open_files:
+                    f.close()
         else:
-            # Standard generation
-            gen_kwargs: dict[str, Any] = {
-                "model": self.gen_model,
-                "prompt": prompt,
-                "n": number_of_images,
-                "quality": quality,
-            }
-            if size != "auto":
-                gen_kwargs["size"] = size
-            result = client.images.generate(**gen_kwargs)
+            result = client.images.generate(**common_kwargs)
 
         # Save generated images
         generated_paths: list[str] = []
@@ -341,7 +262,7 @@ class ChatGPTImagesTool:
                 current_output = output_path
             else:
                 stem = output_path.stem
-                suffix = output_path.suffix or ".png"
+                suffix = output_path.suffix or f".{output_format}"
                 current_output = output_path.parent / f"{stem}_{i + 1}{suffix}"
 
             current_output.parent.mkdir(parents=True, exist_ok=True)
@@ -366,4 +287,82 @@ class ChatGPTImagesTool:
         return ToolResult(
             success=True,
             output={"generated_images": generated_paths, "count": len(generated_paths)},
+        )
+
+    async def _remove_background(self, client: Any, input_data: dict, prompt: str) -> ToolResult:
+        """Remove the background from an image using gpt-image-1.5.
+
+        ``gpt-image-1.5`` supports ``background="transparent"`` which
+        ``gpt-image-2`` does not. Output is forced to PNG for alpha channel.
+        """
+        image_path_str = input_data.get("image_path")
+        if not image_path_str:
+            error_msg = "image_path is required for remove_background operation"
+            return ToolResult(success=False, output=error_msg, error={"message": error_msg})
+
+        output_path_str = input_data.get("output_path")
+        if not output_path_str:
+            error_msg = "output_path is required for remove_background operation"
+            return ToolResult(success=False, output=error_msg, error={"message": error_msg})
+
+        image_path = self._resolve_path(image_path_str)
+        if not image_path.exists():
+            raise FileNotFoundError(f"Image not found: {image_path}")
+
+        output_path = self._resolve_path(output_path_str)
+        # Force .png — alpha channel requires PNG
+        if output_path.suffix.lower() != ".png":
+            output_path = output_path.with_suffix(".png")
+
+        quality = input_data.get("quality", "auto")
+        size = input_data.get("size", "auto")
+        bg_prompt = prompt or self.DEFAULT_BG_REMOVAL_PROMPT
+
+        await self.coordinator.hooks.emit(
+            "tool.openai_images.remove_background",
+            {
+                "image_path": str(image_path),
+                "output_path": str(output_path),
+                "model": self.bg_removal_model,
+                "quality": quality,
+                "size": size,
+            },
+        )
+
+        with open(image_path, "rb") as image_file:
+            edit_kwargs: dict[str, Any] = {
+                "model": self.bg_removal_model,
+                "image": image_file,
+                "prompt": bg_prompt,
+                "background": "transparent",
+                "quality": quality,
+            }
+            if size != "auto":
+                edit_kwargs["size"] = size
+            result = client.images.edit(**edit_kwargs)
+
+        if not result.data:
+            error_msg = "No image was returned in the response"
+            return ToolResult(success=False, output=error_msg, error={"message": error_msg})
+
+        image_item = result.data[0]
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if image_item.b64_json:
+            image_bytes = base64.b64decode(image_item.b64_json)
+            with open(output_path, "wb") as of:
+                of.write(image_bytes)
+            logger.info("Background-removed image saved to: %s", output_path)
+        elif image_item.url:
+            import urllib.request
+
+            urllib.request.urlretrieve(image_item.url, str(output_path))
+            logger.info("Background-removed image downloaded to: %s", output_path)
+        else:
+            error_msg = "No image data (b64_json or url) in the response"
+            return ToolResult(success=False, output=error_msg, error={"message": error_msg})
+
+        return ToolResult(
+            success=True,
+            output={"output_path": str(output_path)},
         )

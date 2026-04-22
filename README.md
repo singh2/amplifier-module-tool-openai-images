@@ -1,21 +1,20 @@
 # amplifier-module-tool-openai-images
 
-OpenAI [ChatGPT Images 2.0](https://openai.com/index/introducing-chatgpt-images-2-0/) tool for [Amplifier](https://github.com/microsoft/amplifier) — image generation, analysis, and comparison via `gpt-image-2`.
+OpenAI Images API tool for [Amplifier](https://github.com/microsoft/amplifier) — generation, editing, and background removal.
 
-> **Two models, two jobs (April 2026):** This module uses `gpt-image-2` for **image generation** (the [Images API](https://developers.openai.com/api/docs/guides/images-vision#generate-images)) and `gpt-5.4` for **image understanding** — analyze and compare operations go through the [Chat Completions vision API](https://developers.openai.com/api/docs/guides/images-vision#analyze-images). Both defaults are configurable — see [Configuration](#configuration).
+> **Two models, two jobs:** This module uses `gpt-image-2` for **image generation and editing** (text-to-image and multi-reference image editing via the [Images API](https://developers.openai.com/api/docs/guides/images-vision#generate-images)) and `gpt-image-1.5` for **background removal** (transparent alpha channel via `images.edit` with `background="transparent"` — a capability `gpt-image-2` does not support). Both defaults are configurable — see [Configuration](#configuration).
 
 ## Operations
 
 | Operation | Model | Description |
 |-----------|-------|-------------|
-| `generate` | `gpt-image-2` | Create images from text prompts. Supports flexible resolutions up to 4K (3840×2160), quality tiers (low/medium/high), and reference image editing. |
-| `analyze` | `gpt-5.4` (vision) | Analyze a single image — UI structure, component identification, typography, color palette. |
-| `compare` | `gpt-5.4` (vision) | Side-by-side visual diff of two images — fidelity checks, before/after change detection. |
+| `generate` | `gpt-image-2` | Create images from text prompts, or edit/combine up to N reference images. Supports flexible resolutions up to 4K (3840×2160), quality tiers (low/medium/high), and output formats (png/jpeg/webp). |
+| `remove_background` | `gpt-image-1.5` | Remove the background from an image and return a transparent PNG. Uses the `images.edit` endpoint with `background="transparent"`. |
 
 ## Install
 
 ```bash
-pip install git+https://github.com/gurksing_microsoft/amplifier-module-tool-openai-images@main
+pip install git+https://github.com/singh2/amplifier-module-tool-openai-images@main
 ```
 
 ## Usage in Amplifier
@@ -25,7 +24,7 @@ Add to a behavior YAML:
 ```yaml
 tools:
   - module: tool-openai-images
-    source: git+https://github.com/gurksing_microsoft/amplifier-module-tool-openai-images@main
+    source: git+https://github.com/singh2/amplifier-module-tool-openai-images@main
 ```
 
 ## Configuration
@@ -41,21 +40,34 @@ Optional mount config:
 | Key | Default | Description |
 |-----|---------|-------------|
 | `api_key` | `$OPENAI_API_KEY` | OpenAI API key (env var fallback) |
-| `gen_model` | `gpt-image-2` | Model for image generation |
-| `vision_model` | `gpt-5.4` | Model for analyze/compare operations |
+| `gen_model` | `gpt-image-2` | Model for image generation and edit-with-references |
+| `bg_removal_model` | `gpt-image-1.5` | Model for background removal (requires `background="transparent"` support) |
 
 ## Generate Parameters
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
+| `prompt` | — | **Required.** Text prompt driving generation or edit. |
+| `output_path` | — | **Required.** Where to save the generated image. |
 | `size` | `auto` | Image dimensions. Any resolution up to 3840px, multiples of 16px, max 3:1 ratio. Popular: `1024x1024`, `1536x1024`, `1024x1536`, `2048x2048`, `3840x2160`. |
 | `quality` | `auto` | `low` (fast drafts), `medium`, `high` (final assets), `auto` |
+| `format` | `png` | Output format: `png`, `jpeg`, or `webp`. Maps to `output_format` in the OpenAI SDK. |
+| `output_compression` | — | Integer 0–100. Only applies when `format` is `jpeg` or `webp`. |
 | `number_of_images` | `1` | Generate 1–4 images per call |
-| `reference_image_path` | — | Reference image for style-guided generation (uses edit endpoint) |
+| `reference_image_path` | — | Single reference image for style-guided generation (uses edit endpoint). Merged with `reference_image_paths` when both are provided. |
+| `reference_image_paths` | — | **List** of reference images (uses edit endpoint with multiple images). |
 
-## Analyze / Compare Input
+When any reference image is supplied the tool routes through `client.images.edit(...)` with the image(s) attached; otherwise it uses `client.images.generate(...)`.
 
-Supported image formats: **PNG**, **JPEG**, **WEBP**, and **non-animated GIF** ([OpenAI requirements](https://developers.openai.com/api/docs/guides/images-vision#image-input-requirements)).
+## Remove Background Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `image_path` | — | **Required.** Input image to remove background from. |
+| `output_path` | — | **Required.** Where to save the transparent PNG. The suffix is forced to `.png` (alpha channel requires PNG). |
+| `quality` | `auto` | `low`, `medium`, `high`, or `auto`. |
+| `size` | `auto` | Output size — same options as `generate`. |
+| `prompt` | `"Remove the background from this image, preserving the foreground subject with high fidelity"` | Optional override for the bg-removal prompt. |
 
 ## Requirements
 
