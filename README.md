@@ -53,6 +53,10 @@ Optional mount config:
 | `number_of_images` | `1` | Generate 1–4 images per call |
 | `reference_image_path` | — | Reference image for style-guided generation (uses edit endpoint) |
 
+## Analyze / Compare Input
+
+Supported image formats: **PNG**, **JPEG**, **WEBP**, and **non-animated GIF** ([OpenAI requirements](https://developers.openai.com/api/docs/guides/images-vision#image-input-requirements)).
+
 ## Requirements
 
 - Python >= 3.11
