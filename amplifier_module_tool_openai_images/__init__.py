@@ -1,4 +1,4 @@
-"""Amplifier Tool: OpenAI Images — image generation, editing, and background removal."""
+"""Amplifier Tool: OpenAI Images — image generation and editing via gpt-image-2."""
 
 __amplifier_module_type__ = "tool"
 
@@ -28,5 +28,5 @@ async def mount(coordinator: Any, config: dict[str, Any] | None = None) -> dict[
     tool = OpenAIImagesTool(config, coordinator)
     await coordinator.mount("tools", tool, name=tool.name)
 
-    logger.info("Mounted OpenAI Images tool (gpt-image-2 / gpt-image-1.5)")
+    logger.info("Mounted OpenAI Images tool (gpt-image-2)")
     return {"name": "tool-openai-images", "version": __version__, "provides": ["openai_images"]}

@@ -1,15 +1,18 @@
 # amplifier-module-tool-openai-images
 
-OpenAI Images API tool for [Amplifier](https://github.com/microsoft/amplifier) — generation, editing, and background removal.
+OpenAI [Images API](https://developers.openai.com/api/docs/guides/image-generation) tool for [Amplifier](https://github.com/microsoft/amplifier) — image generation and editing via `gpt-image-2`.
 
-> **Two models, two jobs:** This module uses `gpt-image-2` for **image generation and editing** (text-to-image and multi-reference image editing via the [Images API](https://developers.openai.com/api/docs/guides/images-vision#generate-images)) and `gpt-image-1.5` for **background removal** (transparent alpha channel via `images.edit` with `background="transparent"` — a capability `gpt-image-2` does not support). Both defaults are configurable — see [Configuration](#configuration).
+> **Model (April 2026):** All operations use [`gpt-image-2`](https://developers.openai.com/api/docs/guides/image-generation) through the Images API. The model is configurable — see [Configuration](#configuration).
 
-## Operations
+## What it does
 
-| Operation | Model | Description |
-|-----------|-------|-------------|
-| `generate` | `gpt-image-2` | Create images from text prompts, or edit/combine up to N reference images. Supports flexible resolutions up to 4K (3840×2160), quality tiers (low/medium/high), and output formats (png/jpeg/webp). |
-| `remove_background` | `gpt-image-1.5` | Remove the background from an image and return a transparent PNG. Uses the `images.edit` endpoint with `background="transparent"`. |
+One operation — `generate` — with three modes depending on which parameters you provide:
+
+| Mode | Parameters | Use case |
+|------|-----------|----------|
+| **Text to image** | `prompt` | Generate from scratch |
+| **Reference editing** | `prompt` + `reference_image_path(s)` | Edit or composite from existing images |
+| **Inpainting** | `prompt` + `reference_image_path` + `mask_path` | Edit only the masked region of an image |
 
 ## Install
 
@@ -40,34 +43,26 @@ Optional mount config:
 | Key | Default | Description |
 |-----|---------|-------------|
 | `api_key` | `$OPENAI_API_KEY` | OpenAI API key (env var fallback) |
-| `gen_model` | `gpt-image-2` | Model for image generation and edit-with-references |
-| `bg_removal_model` | `gpt-image-1.5` | Model for background removal (requires `background="transparent"` support) |
+| `gen_model` | `gpt-image-2` | Model for all operations |
 
-## Generate Parameters
+## Parameters
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `prompt` | — | **Required.** Text prompt driving generation or edit. |
-| `output_path` | — | **Required.** Where to save the generated image. |
+| `prompt` | — | **Required.** Text description of what to generate or how to edit. |
+| `output_path` | — | **Required.** Where to save the result. |
 | `size` | `auto` | Image dimensions. Any resolution up to 3840px, multiples of 16px, max 3:1 ratio. Popular: `1024x1024`, `1536x1024`, `1024x1536`, `2048x2048`, `3840x2160`. |
-| `quality` | `auto` | `low` (fast drafts), `medium`, `high` (final assets), `auto` |
-| `format` | `png` | Output format: `png`, `jpeg`, or `webp`. Maps to `output_format` in the OpenAI SDK. |
-| `output_compression` | — | Integer 0–100. Only applies when `format` is `jpeg` or `webp`. |
-| `number_of_images` | `1` | Generate 1–4 images per call |
-| `reference_image_path` | — | Single reference image for style-guided generation (uses edit endpoint). Merged with `reference_image_paths` when both are provided. |
-| `reference_image_paths` | — | **List** of reference images (uses edit endpoint with multiple images). |
+| `quality` | `auto` | `low` (fast drafts), `medium`, `high` (final assets), `auto`. |
+| `format` | `png` | Output format: `png`, `jpeg`, `webp`. Use `jpeg` for faster iteration. |
+| `output_compression` | — | Compression level 0–100%. Only applies to `jpeg` and `webp`. |
+| `number_of_images` | `1` | Generate 1–4 images per call. |
+| `reference_image_path` | — | Single reference image for editing (uses the [edits endpoint](https://developers.openai.com/api/docs/guides/image-generation#edit-images)). |
+| `reference_image_paths` | — | List of reference images for compositing multiple sources into one scene. |
+| `mask_path` | — | Mask image (PNG with alpha channel) for [inpainting](https://developers.openai.com/api/docs/guides/image-generation#edit-an-image-using-a-mask). Transparent areas mark where to edit. Must match the reference image dimensions. |
 
-When any reference image is supplied the tool routes through `client.images.edit(...)` with the image(s) attached; otherwise it uses `client.images.generate(...)`.
+## Supported input formats
 
-## Remove Background Parameters
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `image_path` | — | **Required.** Input image to remove background from. |
-| `output_path` | — | **Required.** Where to save the transparent PNG. The suffix is forced to `.png` (alpha channel requires PNG). |
-| `quality` | `auto` | `low`, `medium`, `high`, or `auto`. |
-| `size` | `auto` | Output size — same options as `generate`. |
-| `prompt` | `"Remove the background from this image, preserving the foreground subject with high fidelity"` | Optional override for the bg-removal prompt. |
+Reference and mask images: **PNG**, **JPEG**, **WEBP** — under 50 MB each ([OpenAI requirements](https://developers.openai.com/api/docs/guides/images-vision#image-input-requirements)).
 
 ## Requirements
 
