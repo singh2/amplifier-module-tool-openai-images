@@ -1,7 +1,7 @@
 """OpenAI Images tool implementation — wraps the OpenAI Images API.
 
 Uses ``gpt-image-2`` for generation and editing (including inpainting via
-masks).
+masks), and ``gpt-image-1.5`` for background removal (transparent PNG output).
 """
 
 import base64
@@ -16,9 +16,14 @@ logger = logging.getLogger(__name__)
 
 
 class OpenAIImagesTool:
-    """OpenAI Images tool for generation and editing."""
+    """OpenAI Images tool for generation, editing, and background removal."""
 
     DEFAULT_GEN_MODEL = "gpt-image-2"
+    DEFAULT_BG_REMOVAL_MODEL = "gpt-image-1.5"
+    DEFAULT_BG_REMOVAL_PROMPT = (
+        "Remove the background from this image, preserving the foreground "
+        "subject with high fidelity"
+    )
 
     def __init__(self, config: dict[str, Any], coordinator: Any) -> None:
         self.config = config
@@ -26,6 +31,7 @@ class OpenAIImagesTool:
         self.api_key = config.get("api_key") or os.getenv("OPENAI_API_KEY")
         self.working_dir = config.get("working_dir")
         self.gen_model = config.get("gen_model", self.DEFAULT_GEN_MODEL)
+        self.bg_removal_model = config.get("bg_removal_model", self.DEFAULT_BG_REMOVAL_MODEL)
 
     @property
     def name(self) -> str:
@@ -34,12 +40,13 @@ class OpenAIImagesTool:
     @property
     def description(self) -> str:
         return (
-            "OpenAI Images tool for image generation and editing via "
-            "gpt-image-2. Single operation: generate (text-to-image, "
-            "reference-image editing, and mask-based inpainting). Supports "
-            "flexible resolutions up to 4K, quality tiers (low/medium/high), "
-            "output formats (png/jpeg/webp), and multi-image reference "
-            "editing."
+            "OpenAI Images tool for image generation, editing, and background "
+            "removal. Operations: generate (text-to-image, reference-image "
+            "editing, and mask-based inpainting via gpt-image-2); "
+            "remove_background (produce a transparent PNG via gpt-image-1.5). "
+            "Supports flexible resolutions up to 4K, quality tiers "
+            "(low/medium/high), output formats (png/jpeg/webp), and "
+            "multi-image reference editing."
         )
 
     @property
@@ -49,9 +56,11 @@ class OpenAIImagesTool:
             "properties": {
                 "operation": {
                     "type": "string",
-                    "enum": ["generate"],
+                    "enum": ["generate", "remove_background"],
                     "description": (
-                        "Operation: generate (create or edit images via gpt-image-2)"
+                        "Operation: generate (create or edit images via "
+                        "gpt-image-2) or remove_background (transparent PNG "
+                        "via gpt-image-1.5)"
                     ),
                 },
                 "prompt": {
@@ -61,6 +70,10 @@ class OpenAIImagesTool:
                 "output_path": {
                     "type": "string",
                     "description": "Output path for generated/edited image (required for generate)",
+                },
+                "image_path": {
+                    "type": "string",
+                    "description": "Input image for remove_background (required for that operation).",
                 },
                 "number_of_images": {
                     "type": "integer",
@@ -156,8 +169,12 @@ class OpenAIImagesTool:
         try:
             if operation == "generate":
                 return await self._generate(client, input_data, prompt)
+            if operation == "remove_background":
+                return await self._remove_background(client, input_data, prompt)
 
-            error_msg = f"Unknown operation: {operation}. Use 'generate'."
+            error_msg = (
+                f"Unknown operation: {operation}. Use 'generate' or 'remove_background'."
+            )
             return ToolResult(success=False, output=error_msg, error={"message": error_msg})
         except FileNotFoundError as e:
             await self.coordinator.hooks.emit(
@@ -291,4 +308,78 @@ class OpenAIImagesTool:
         return ToolResult(
             success=True,
             output={"generated_images": generated_paths, "count": len(generated_paths)},
+        )
+
+    async def _remove_background(self, client: Any, input_data: dict, prompt: str) -> ToolResult:
+        """Remove the background from an image using gpt-image-1.5.
+
+        gpt-image-1.5 supports background="transparent" which gpt-image-2 does
+        not. Output is forced to PNG for alpha channel.
+        """
+        image_path_str = input_data.get("image_path")
+        if not image_path_str:
+            error_msg = "image_path is required for remove_background operation"
+            return ToolResult(success=False, output=error_msg, error={"message": error_msg})
+
+        output_path_str = input_data.get("output_path")
+        if not output_path_str:
+            error_msg = "output_path is required for remove_background operation"
+            return ToolResult(success=False, output=error_msg, error={"message": error_msg})
+
+        image_path = self._resolve_path(image_path_str)
+        if not image_path.exists():
+            raise FileNotFoundError(f"Image not found: {image_path}")
+
+        output_path = self._resolve_path(output_path_str)
+        if output_path.suffix.lower() != ".png":
+            output_path = output_path.with_suffix(".png")
+
+        quality = input_data.get("quality", "auto")
+        size = input_data.get("size", "auto")
+        bg_prompt = prompt or self.DEFAULT_BG_REMOVAL_PROMPT
+
+        await self.coordinator.hooks.emit(
+            "tool.openai_images.remove_background",
+            {
+                "image_path": str(image_path),
+                "output_path": str(output_path),
+                "model": self.bg_removal_model,
+            },
+        )
+
+        with open(image_path, "rb") as image_file:
+            edit_kwargs: dict[str, Any] = {
+                "model": self.bg_removal_model,
+                "image": image_file,
+                "prompt": bg_prompt,
+                "background": "transparent",
+                "quality": quality,
+            }
+            if size != "auto":
+                edit_kwargs["size"] = size
+            result = client.images.edit(**edit_kwargs)
+
+        if not result.data:
+            error_msg = "No image was returned in the response"
+            return ToolResult(success=False, output=error_msg, error={"message": error_msg})
+
+        image_item = result.data[0]
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if image_item.b64_json:
+            image_bytes = base64.b64decode(image_item.b64_json)
+            with open(output_path, "wb") as f:
+                f.write(image_bytes)
+            logger.info("Background-removed image saved to: %s", output_path)
+        elif image_item.url:
+            import urllib.request
+            urllib.request.urlretrieve(image_item.url, str(output_path))
+            logger.info("Background-removed image downloaded to: %s", output_path)
+        else:
+            error_msg = "No image data (b64_json or url) in the response"
+            return ToolResult(success=False, output=error_msg, error={"message": error_msg})
+
+        return ToolResult(
+            success=True,
+            output={"output_path": str(output_path)},
         )

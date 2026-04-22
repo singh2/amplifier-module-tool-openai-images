@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "amplifier-module-tool-openai-images"
 version = "0.1.0"
-description = "OpenAI Images API tool for Amplifier — image generation and editing via gpt-image-2"
+description = "OpenAI Images API tool for Amplifier — image generation, editing, and background removal via gpt-image-2 and gpt-image-1.5"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 dependencies = [

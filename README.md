@@ -1,18 +1,15 @@
 # amplifier-module-tool-openai-images
 
-OpenAI [Images API](https://developers.openai.com/api/docs/guides/image-generation) tool for [Amplifier](https://github.com/microsoft/amplifier) — image generation and editing via `gpt-image-2`.
+OpenAI [Images API](https://developers.openai.com/api/docs/guides/image-generation) tool for [Amplifier](https://github.com/microsoft/amplifier) — image generation, editing, and background removal.
 
-> **Model (April 2026):** All operations use [`gpt-image-2`](https://developers.openai.com/api/docs/guides/image-generation) through the Images API. The model is configurable — see [Configuration](#configuration).
+> **Two models (April 2026):** `gpt-image-2` handles generation and editing. `gpt-image-1.5` handles background removal — `gpt-image-2` [does not support transparent backgrounds](https://developers.openai.com/api/docs/guides/image-generation#customize-image-output). Both defaults are configurable — see [Configuration](#configuration).
 
 ## What it does
 
-One operation — `generate` — with three modes depending on which parameters you provide:
-
-| Mode | Parameters | Use case |
-|------|-----------|----------|
-| **Text to image** | `prompt` | Generate from scratch |
-| **Reference editing** | `prompt` + `reference_image_path(s)` | Edit or composite from existing images |
-| **Inpainting** | `prompt` + `reference_image_path` + `mask_path` | Edit only the masked region of an image |
+| Operation | Model | Modes |
+|-----------|-------|-------|
+| `generate` | `gpt-image-2` | **Text to image** — `prompt` only. **Reference editing** — `prompt` + `reference_image_path(s)`. **Inpainting** — `prompt` + `reference_image_path` + `mask_path`. |
+| `remove_background` | `gpt-image-1.5` | Remove the background from an image, producing a transparent PNG. |
 
 ## Install
 
@@ -43,9 +40,10 @@ Optional mount config:
 | Key | Default | Description |
 |-----|---------|-------------|
 | `api_key` | `$OPENAI_API_KEY` | OpenAI API key (env var fallback) |
-| `gen_model` | `gpt-image-2` | Model for all operations |
+| `gen_model` | `gpt-image-2` | Model for generate operation |
+| `bg_removal_model` | `gpt-image-1.5` | Model for remove_background operation |
 
-## Parameters
+## Generate Parameters
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
@@ -60,9 +58,19 @@ Optional mount config:
 | `reference_image_paths` | — | List of reference images for compositing multiple sources into one scene. |
 | `mask_path` | — | Mask image (PNG with alpha channel) for [inpainting](https://developers.openai.com/api/docs/guides/image-generation#edit-an-image-using-a-mask). Transparent areas mark where to edit. Must match the reference image dimensions. |
 
+## Remove Background Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `image_path` | — | **Required.** Input image to remove background from. |
+| `output_path` | — | **Required.** Output path (forced to `.png` for alpha channel). |
+| `quality` | `auto` | `low`, `medium`, `high`, `auto`. |
+| `size` | `auto` | Output dimensions. |
+| `prompt` | built-in | Override the default background removal prompt. |
+
 ## Supported input formats
 
-Reference and mask images: **PNG**, **JPEG**, **WEBP** — under 50 MB each ([OpenAI requirements](https://developers.openai.com/api/docs/guides/images-vision#image-input-requirements)).
+Reference, mask, and background-removal images: **PNG**, **JPEG**, **WEBP** — under 50 MB each ([OpenAI requirements](https://developers.openai.com/api/docs/guides/images-vision#image-input-requirements)).
 
 ## Requirements
 
