@@ -31,7 +31,7 @@ class ChatGPTImagesTool:
 
     @property
     def name(self) -> str:
-        return "chatgpt_images"
+        return "openai_images"
 
     @property
     def description(self) -> str:
@@ -160,12 +160,12 @@ class ChatGPTImagesTool:
                 return ToolResult(success=False, output=error_msg, error={"message": error_msg})
         except FileNotFoundError as e:
             await self.coordinator.hooks.emit(
-                "tool.chatgpt_images.error", {"operation": operation, "error": str(e)}
+                "tool.openai_images.error", {"operation": operation, "error": str(e)}
             )
             return ToolResult(success=False, output=str(e), error={"message": str(e)})
         except Exception as e:
             await self.coordinator.hooks.emit(
-                "tool.chatgpt_images.error", {"operation": operation, "error": str(e)}
+                "tool.openai_images.error", {"operation": operation, "error": str(e)}
             )
             error_msg = f"ChatGPT Images request failed: {e}"
             return ToolResult(success=False, output=error_msg, error={"message": error_msg})
@@ -182,7 +182,7 @@ class ChatGPTImagesTool:
             raise FileNotFoundError(f"Image not found: {image_path}")
 
         await self.coordinator.hooks.emit(
-            "tool.chatgpt_images.analyze",
+            "tool.openai_images.analyze",
             {"image_path": str(image_path), "model": self.vision_model},
         )
 
@@ -233,7 +233,7 @@ class ChatGPTImagesTool:
         label2 = input_data.get("image2_label", "IMAGE 2")
 
         await self.coordinator.hooks.emit(
-            "tool.chatgpt_images.compare",
+            "tool.openai_images.compare",
             {"image1_path": str(image1_path), "image2_path": str(image2_path)},
         )
 
@@ -294,7 +294,7 @@ class ChatGPTImagesTool:
         reference_path_str = input_data.get("reference_image_path")
 
         await self.coordinator.hooks.emit(
-            "tool.chatgpt_images.generate",
+            "tool.openai_images.generate",
             {
                 "output_path": str(output_path),
                 "model": self.gen_model,

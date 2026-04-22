@@ -1,6 +1,8 @@
-# amplifier-module-tool-chatgpt-images
+# amplifier-module-tool-openai-images
 
 OpenAI [ChatGPT Images 2.0](https://openai.com/index/introducing-chatgpt-images-2-0/) tool for [Amplifier](https://github.com/microsoft/amplifier) — image generation, analysis, and comparison via `gpt-image-2`.
+
+> **Two models, two jobs (April 2026):** This module uses `gpt-image-2` for **image generation** (the [Images API](https://developers.openai.com/api/docs/guides/images-vision#generate-images)) and `gpt-5.4` for **image understanding** — analyze and compare operations go through the [Chat Completions vision API](https://developers.openai.com/api/docs/guides/images-vision#analyze-images). Both defaults are configurable — see [Configuration](#configuration).
 
 ## Operations
 
@@ -13,7 +15,7 @@ OpenAI [ChatGPT Images 2.0](https://openai.com/index/introducing-chatgpt-images-
 ## Install
 
 ```bash
-pip install git+https://github.com/gurksing_microsoft/amplifier-module-tool-chatgpt-images@main
+pip install git+https://github.com/gurksing_microsoft/amplifier-module-tool-openai-images@main
 ```
 
 ## Usage in Amplifier
@@ -22,8 +24,8 @@ Add to a behavior YAML:
 
 ```yaml
 tools:
-  - module: tool-chatgpt-images
-    source: git+https://github.com/gurksing_microsoft/amplifier-module-tool-chatgpt-images@main
+  - module: tool-openai-images
+    source: git+https://github.com/gurksing_microsoft/amplifier-module-tool-openai-images@main
 ```
 
 ## Configuration

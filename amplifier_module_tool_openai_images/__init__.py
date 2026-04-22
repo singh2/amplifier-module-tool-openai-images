@@ -29,4 +29,4 @@ async def mount(coordinator: Any, config: dict[str, Any] | None = None) -> dict[
     await coordinator.mount("tools", tool, name=tool.name)
 
     logger.info("Mounted ChatGPT Images tool (ChatGPT Images 2.0)")
-    return {"name": "tool-chatgpt-images", "version": __version__, "provides": ["chatgpt_images"]}
+    return {"name": "tool-openai-images", "version": __version__, "provides": ["openai_images"]}
